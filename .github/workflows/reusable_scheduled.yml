@@ -1,0 +1,44 @@
+name: Reusable Scheduled Jobs
+
+# --------------------------------------------------------------------------
+# This workflow only runs when explicitly called by another workflow.
+# --------------------------------------------------------------------------
+on:
+  workflow_call:
+    inputs:
+      scan-args:
+        description: 'Additional arguments to pass to osv-scanner'
+        required: false
+        type: string
+
+# This workflow is passive so ensure the minimal permissions even if the
+# inherited token is more lenient.
+permissions:
+  contents: read
+  id-token: none
+  pull-requests: none
+  actions: none
+  security-events: none
+
+jobs:
+  call_ext_osv_scanner:
+    name: OSV-Scanner
+    # https://google.github.io/osv-scanner/github-action/
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@375a0e8ebdc98e99b02ac4338a724f5750f21213 # v2.3.1
+    permissions:
+      contents: read
+      actions: read           # Needed to upload SARIF file to CodeQL. See: https://github.com/github/codeql-action/issues/2117
+      security-events: write  # Needed to upload the results to code-scanning dashboard.
+    with:
+      scan-args: "${{ inputs.scan-args }}"
+      fail-on-vuln: true
+      upload-sarif: true
+      results-file-name: osv-scanner-scheduled-results-${{ github.workflow_sha }}-${{ github.run_number }}.sarif
+
+  call_reusable_security:
+    name: OpenSSF Scorecards
+    permissions:
+      contents: read
+      security-events: write  # Needed to upload the results to code-scanning dashboard.
+      id-token: write         # Needed to access GitHub's OIDC token which verifies the authenticity of the result when publishing it.
+    uses: sonupreetam/org-infra-tests/.github/workflows/reusable_security.yml@main

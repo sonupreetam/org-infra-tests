@@ -1,0 +1,36 @@
+name: Security Checks
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  actions: none
+  id-token: none
+  security-events: none
+
+jobs:
+  call_reusable_vuln_scan:
+    name: OSV-Scanner
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    uses: sonupreetam/org-infra-tests/.github/workflows/reusable_vuln_scan.yml@main
+    # TODO: Re-add 'enable_trivy_source: true' once reusable_vuln_scan.yml is merged to main
+    # with:
+    #   # OSV focuses on known CVEs in dependencies; Trivy adds broader coverage
+    #   enable_trivy_source: true
+
+  call_reusable_security:
+    name: OpenSSF Scorecards
+    permissions:
+      contents: read
+      id-token: write
+      security-events: write
+    uses: sonupreetam/org-infra-tests/.github/workflows/reusable_security.yml@main
