@@ -57,6 +57,11 @@ on:
         description: 'Username for GHCR login (defaults to github.actor)'
         required: false
         type: string
+      verify_attestations:
+        description: 'Verify SBOM and SLSA attestations (disable for promoted images)'
+        required: false
+        type: boolean
+        default: true
     secrets:
       registry_token:
         description: 'Optional GHCR token. If not provided, falls back to GITHUB_TOKEN.'
@@ -118,7 +123,7 @@ jobs:
       image_ref: ${{ needs.call_reusable_push.outputs.primary_image }}:sha-${{ github.sha }}
 
   call_reusable_sign_and_verify:
-    if: ${{ github.ref_protected || startsWith(github.ref, 'refs/tags/') || contains(github.ref, 'feat/') }}
+    if: ${{ github.ref_protected || startsWith(github.ref, 'refs/tags/') || contains(github.ref, 'feat/') || github.ref == 'refs/heads/main' }}
     needs: [call_reusable_push, call_reusable_vuln_scan]
     permissions:
       packages: write
@@ -129,6 +134,7 @@ jobs:
       digest: ${{ needs.call_reusable_push.outputs.digest }}
       allowed_identity_regex: ${{ inputs.allowed_identity_regex }}
       registry_username: ${{ inputs.registry_username }}
+      verify_attestations: false  # Docker/BuildKit attestations use different signing than Sigstore
     secrets:
       registry_token: ${{ secrets.registry_token }}
       quay_username: ${{ secrets.quay_username }}
