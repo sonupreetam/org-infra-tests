@@ -130,6 +130,34 @@ jobs:
           IMAGE="${IMAGE_INPUT%%,*}@${DIGEST}"
           IMAGE="${IMAGE# }"  # trim leading space
 
+          # Debug: Show what identity we're looking for vs what the signature has
+          echo "::group::Debug: Certificate Identity Info"
+          echo "Expected identity regex: $IDENTITY_REGEX"
+          echo "Expected OIDC issuer: https://token.actions.githubusercontent.com"
+          echo "Image: $IMAGE"
+          echo ""
+          echo "Actual certificate from signature (using permissive verification):"
+          if cosign verify \
+            --certificate-identity-regexp='.*' \
+            --certificate-oidc-issuer-regexp='.*' \
+            --output json "$IMAGE" 2>/dev/null | jq -r '.[0].optional // empty | {
+              "Subject": .Subject,
+              "Issuer": .Issuer, 
+              "OIDC Issuer": ."1.3.6.1.4.1.57264.1.1",
+              "GitHub Workflow Trigger": ."1.3.6.1.4.1.57264.1.2",
+              "GitHub Workflow SHA": ."1.3.6.1.4.1.57264.1.3",
+              "GitHub Workflow Name": ."1.3.6.1.4.1.57264.1.4",
+              "GitHub Workflow Repository": ."1.3.6.1.4.1.57264.1.5",
+              "GitHub Workflow Ref": ."1.3.6.1.4.1.57264.1.6"
+            }' 2>/dev/null; then
+            echo "✓ Signature found and decoded"
+          else
+            echo "⚠ Could not decode certificate - signature may not exist or different format"
+            # Try raw output
+            cosign verify --certificate-identity-regexp='.*' --certificate-oidc-issuer-regexp='.*' "$IMAGE" 2>&1 || true
+          fi
+          echo "::endgroup::"
+
           COSIGN_FLAGS=(
             "--certificate-identity-regexp=$IDENTITY_REGEX"
             "--certificate-oidc-issuer=https://token.actions.githubusercontent.com"
