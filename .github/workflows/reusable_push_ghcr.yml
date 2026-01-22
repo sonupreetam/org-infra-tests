@@ -1,0 +1,132 @@
+# Reusable Push Image Workflow
+# ============================
+# Builds and pushes container images with supply chain security artifacts.
+# Focused responsibility: build + push only.
+
+name: Reusable Push Image
+
+on:
+  workflow_call:
+    inputs:
+      component_name:
+        description: 'Component name (e.g., compass, beacon-distro)'
+        required: true
+        type: string
+      containerfile_path:
+        description: 'Containerfile path relative to repo root'
+        required: true
+        type: string
+      context_path:
+        description: 'Build context path'
+        required: true
+        type: string
+      image_name:
+        description: 'Image name without registry (e.g., org/image-name)'
+        required: true
+        type: string
+      image_description:
+        description: 'Image description for OCI label (defaults to component_name)'
+        required: false
+        type: string
+      image_vendor:
+        description: 'Vendor name for OCI label'
+        required: false
+        type: string
+      force_rebuild:
+        description: 'Force rebuild without cache'
+        required: false
+        default: false
+        type: boolean
+      platforms:
+        description: 'Comma-separated target platforms'
+        required: false
+        default: 'linux/amd64'
+        type: string
+    outputs:
+      digest:
+        description: 'Pushed image digest'
+        value: ${{ jobs.push.outputs.digest }}
+      image:
+        description: 'Full image name (ghcr.io/org/image)'
+        value: ${{ jobs.push.outputs.image }}
+
+permissions:
+  contents: none
+  packages: none
+
+concurrency:
+  group: reusable-push-${{ inputs.image_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read    # Checkout source code
+      packages: write   # Push to GHCR (and write cache)
+      actions: read     # Required for GHA cache access (Buildx layer caching)
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
+      image: ${{ steps.images.outputs.image }}
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: Log in to GHCR
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+
+      - name: Set up Container Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Set image reference
+        id: images
+        env:
+          IMAGE_NAME: ${{ inputs.image_name }}
+        run: echo "image=ghcr.io/${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Container metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ steps.images.outputs.image }}
+          tags: |
+            type=sha,format=long,prefix=sha-
+          flavor: |
+            latest=false
+          labels: |
+            org.opencontainers.image.title=${{ inputs.component_name }}
+            org.opencontainers.image.description=${{ inputs.image_description || inputs.component_name }}
+            ${{ inputs.image_vendor && format('org.opencontainers.image.vendor={0}', inputs.image_vendor) || '' }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: ${{ inputs.context_path }}
+          file: ${{ inputs.containerfile_path }}
+          push: true
+          platforms: ${{ inputs.platforms }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: |
+            type=gha,scope=${{ inputs.component_name }}-${{ github.ref_name }}
+            type=gha,scope=${{ inputs.component_name }}-main
+          cache-to: type=gha,mode=max,scope=${{ inputs.component_name }}-${{ github.ref_name }}
+          sbom: true
+          provenance: mode=max
+          no-cache: ${{ inputs.force_rebuild }}
+
+      - name: Export digest
+        id: digest
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+        run: echo "digest=${BUILD_DIGEST}" >> "$GITHUB_OUTPUT"
