@@ -78,7 +78,6 @@ jobs:
           format: 'sarif'
           output: 'trivy-source.sarif'
           exit-code: '1'
-          trivy-version: 'v0.68.2'
 
       - name: Upload SARIF
         if: ${{ always() }}
@@ -115,7 +114,6 @@ jobs:
           format: 'sarif'
           output: 'trivy-image.sarif'
           exit-code: '1'
-          trivy-version: 'v0.68.2'
 
       - name: Upload SARIF
         if: ${{ always() }}
