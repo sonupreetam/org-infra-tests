@@ -78,6 +78,7 @@ jobs:
           format: 'sarif'
           output: 'trivy-source.sarif'
           exit-code: '1'
+          trivy-version: 'v0.68.2'
 
       - name: Upload SARIF
         if: ${{ always() }}
@@ -114,6 +115,7 @@ jobs:
           format: 'sarif'
           output: 'trivy-image.sarif'
           exit-code: '1'
+          trivy-version: 'v0.68.2'
 
       - name: Upload SARIF
         if: ${{ always() }}
@@ -124,7 +126,7 @@ jobs:
 
       # Attestation: attach vuln scan proof to image (travels with cosign copy)
       - name: Install Cosign
-        if: ${{ inputs.image_digest != '' && github.ref_protected }}
+        if: ${{ inputs.image_digest != '' }}
         uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
 
       - name: Attest vulnerability scan
