@@ -151,5 +151,5 @@ jobs:
             exit 1
           fi
           IMAGE="${IMAGE_REF%%[:@]*}@${DIGEST}"
-          cosign attest --predicate trivy-image.sarif --type vuln --yes "$IMAGE"
+          cosign attest --predicate "$SARIF_FILE" --type vuln --yes "$IMAGE"
           echo "attached=true" >> "$GITHUB_OUTPUT"
