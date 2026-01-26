@@ -154,3 +154,22 @@ jobs:
           subject-digest: ${{ steps.build.outputs.digest }}
           sbom-path: sbom.spdx.json
           push-to-registry: true
+
+      - name: Install Cosign (for attestation verification)
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
+
+      - name: Debug - Verify attestations were created
+        env:
+          IMAGE: ${{ steps.images.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          echo "=== Verifying attestations for $IMAGE@$DIGEST ==="
+          echo ""
+          echo "=== GitHub Attestations (gh attestation list) ==="
+          gh attestation list "$IMAGE@$DIGEST" --repo "$GITHUB_REPOSITORY" || echo "No GitHub attestations found or gh CLI error"
+          echo ""
+          echo "=== Registry Attestations (cosign tree) ==="
+          cosign tree "$IMAGE@$DIGEST" 2>/dev/null || echo "cosign tree failed or no artifacts found"
+          echo ""
+          echo "=== Cosign download attestation ==="
+          cosign download attestation "$IMAGE@$DIGEST" 2>/dev/null | head -c 500 || echo "No attestations downloadable via cosign"
