@@ -63,9 +63,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
-      contents: read    # Checkout source code
-      packages: write   # Push to GHCR (and write cache)
-      actions: read     # Required for GHA cache access (Buildx layer caching)
+      contents: read      # Checkout source code
+      packages: write     # Push to GHCR (and write cache)
+      actions: read       # Required for GHA cache access (Buildx layer caching)
+      id-token: write     # Required for GitHub attestations (OIDC token)
+      attestations: write # Required for pushing attestations to GHCR
     outputs:
       digest: ${{ steps.digest.outputs.digest }}
       image: ${{ steps.images.outputs.image }}
@@ -121,8 +123,8 @@ jobs:
             type=gha,scope=${{ inputs.component_name }}-${{ github.ref_name }}
             type=gha,scope=${{ inputs.component_name }}-main
           cache-to: type=gha,mode=max,scope=${{ inputs.component_name }}-${{ github.ref_name }}
-          sbom: true
-          provenance: mode=max
+          sbom: false            # Using anchore/sbom-action + actions/attest-sbom instead
+          provenance: mode=max   # Keep for docker-native inspection (GitHub attestation is primary)
           no-cache: ${{ inputs.force_rebuild }}
 
       - name: Export digest
@@ -130,3 +132,26 @@ jobs:
         env:
           BUILD_DIGEST: ${{ steps.build.outputs.digest }}
         run: echo "digest=${BUILD_DIGEST}" >> "$GITHUB_OUTPUT"
+
+      # GitHub native attestations (Sigstore-signed)
+      - name: Attest SLSA provenance
+        uses: actions/attest-build-provenance@c074443f1aee8d4aeeae555aebba3282517141b2 # v2.2.3
+        with:
+          subject-name: ${{ steps.images.outputs.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@f325610c9f50a54015d37c8d16cb3b0e2c8f4de0 # v0.18.0
+        with:
+          image: ${{ steps.images.outputs.image }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Attest SBOM
+        uses: actions/attest-sbom@115c3be05ff3974bcbd596578934b3f9ce39bf68 # v2.2.0
+        with:
+          subject-name: ${{ steps.images.outputs.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
