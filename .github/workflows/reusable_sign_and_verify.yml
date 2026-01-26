@@ -1,16 +1,22 @@
 # Reusable Sign and Verify Workflow
 # ==================================
 # Implements keyless container image signing using Sigstore/Cosign.
-# Always verifies ALL attestations (security-in-depth, no opt-out).
+# Extracts BuildKit attestations and re-attests with Sigstore for verification.
 #
 # Prerequisites (run these workflows first):
-#   1. reusable_publish_ghcr.yml - creates image with SBOM + SLSA provenance attestations
-#   2. reusable_vuln_scan.yml    - attaches vuln attestation
+#   1. reusable_publish_ghcr.yml - creates image with SBOM + SLSA provenance (BuildKit)
+#   2. reusable_vuln_scan.yml    - attaches vuln attestation (already Sigstore-signed)
 #
-# Attestations verified (mandatory):
+# What this workflow does:
+#   1. Extracts BuildKit provenance/SBOM from image (unsigned OCI artifacts)
+#   2. Re-attests them with Cosign (now Sigstore-signed with Rekor audit trail)
+#   3. Signs the image with keyless signing
+#   4. Verifies all attestations cryptographically
+#
+# Attestations verified:
 #   - signature:       Keyless signature via Sigstore
-#   - slsaprovenance:  Build provenance (from docker/build-push-action)
-#   - spdx:            SBOM (from docker/build-push-action)
+#   - slsaprovenance:  Build provenance (extracted from BuildKit, re-attested)
+#   - spdxjson:        SBOM (extracted from BuildKit, re-attested)
 #   - vuln:            Vulnerability scan results (from reusable_vuln_scan.yml)
 
 name: Reusable Sign and Verify
@@ -92,54 +98,95 @@ jobs:
       - name: Install Cosign
         uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
 
+      - name: Install ORAS
+        uses: oras-project/setup-oras@5c0b487ce3cb98b175990ab2cdc7fd0b6e6ede59 # v1.2.2
+
+      # Extract BuildKit attestations (provenance + SBOM)
+      - name: Fetch attestation manifest
+        id: att
+        env:
+          IMAGE: ${{ inputs.image_name }}@${{ inputs.digest }}
+        run: |
+          DIGEST=$(oras manifest fetch "$IMAGE" | jq -r '.manifests[] | select(.annotations["vnd.docker.reference.type"]=="attestation-manifest") | .digest')
+          [[ -z "$DIGEST" ]] && { echo "::error::No BuildKit attestation manifest found"; exit 1; }
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "base=${IMAGE%%@*}" >> "$GITHUB_OUTPUT"
+
+      - name: Extract SLSA provenance
+        id: provenance
+        env:
+          BASE: ${{ steps.att.outputs.base }}
+          ATT: ${{ steps.att.outputs.digest }}
+        run: |
+          LAYER=$(oras manifest fetch "$BASE@$ATT" | jq -r '.layers[] | select(.annotations["in-toto.io/predicate-type"] | test("slsaprovenance")) | .digest')
+          if [[ -z "$LAYER" ]]; then
+            echo "::error::SLSA provenance not found in BuildKit attestations - refusing to sign untrusted image"
+            exit 1
+          fi
+          oras blob fetch "$BASE@$LAYER" | jq '.predicate // .' > provenance.json
+
+      - name: Extract SBOM
+        id: sbom
+        env:
+          BASE: ${{ steps.att.outputs.base }}
+          ATT: ${{ steps.att.outputs.digest }}
+        run: |
+          LAYER=$(oras manifest fetch "$BASE@$ATT" | jq -r '.layers[] | select(.annotations["in-toto.io/predicate-type"] | test("spdx")) | .digest')
+          if [[ -z "$LAYER" ]]; then
+            echo "::error::SBOM not found in BuildKit attestations - refusing to sign untrusted image"
+            exit 1
+          fi
+          oras blob fetch "$BASE@$LAYER" | jq '.predicate // .' > sbom.json
+
+      # Re-attest with Sigstore (makes BuildKit attestations verifiable)
+      - name: Attest SLSA provenance
+        env:
+          IMAGE: ${{ inputs.image_name }}@${{ inputs.digest }}
+        run: cosign attest --predicate provenance.json --type slsaprovenance --yes "$IMAGE"
+
+      - name: Attest SBOM
+        env:
+          IMAGE: ${{ inputs.image_name }}@${{ inputs.digest }}
+        run: cosign attest --predicate sbom.json --type spdxjson --yes "$IMAGE"
+
+      # Sign image
       - name: Sign image
         env:
-          IMAGE_NAME: ${{ inputs.image_name }}
-          DIGEST: ${{ inputs.digest }}
-        run: |
-          echo "Signing: ${IMAGE_NAME}@${DIGEST}"
-          cosign sign --yes "${IMAGE_NAME}@${DIGEST}"
+          IMAGE: ${{ inputs.image_name }}@${{ inputs.digest }}
+        run: cosign sign --yes "$IMAGE"
 
+      # Verify all attestations
       - name: Verify signature
         id: output
         env:
           IMAGE: ${{ inputs.image_name }}@${{ inputs.digest }}
-          IDENTITY_REGEX: ${{ inputs.allowed_identity_regex || format('https://github.com/{0}/.*', github.repository_owner) }}
+          IDENTITY: ${{ inputs.allowed_identity_regex || format('https://github.com/{0}/.*', github.repository_owner) }}
         run: |
-          cosign verify \
-            --certificate-identity-regexp="$IDENTITY_REGEX" \
-            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-            "$IMAGE" >/dev/null
-
+          cosign verify --certificate-identity-regexp="$IDENTITY" \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com "$IMAGE" >/dev/null
           echo "digest=${{ inputs.digest }}" >> "$GITHUB_OUTPUT"
           echo "image=${{ inputs.image_name }}" >> "$GITHUB_OUTPUT"
 
       - name: Verify SLSA provenance
         env:
           IMAGE: ${{ inputs.image_name }}@${{ inputs.digest }}
-          IDENTITY_REGEX: ${{ inputs.allowed_identity_regex || format('https://github.com/{0}/.*', github.repository_owner) }}
+          IDENTITY: ${{ inputs.allowed_identity_regex || format('https://github.com/{0}/.*', github.repository_owner) }}
         run: |
-          cosign verify-attestation --type slsaprovenance \
-            --certificate-identity-regexp="$IDENTITY_REGEX" \
-            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-            "$IMAGE" >/dev/null
+          cosign verify-attestation --type slsaprovenance --certificate-identity-regexp="$IDENTITY" \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com "$IMAGE" >/dev/null
 
       - name: Verify SBOM
         env:
           IMAGE: ${{ inputs.image_name }}@${{ inputs.digest }}
-          IDENTITY_REGEX: ${{ inputs.allowed_identity_regex || format('https://github.com/{0}/.*', github.repository_owner) }}
+          IDENTITY: ${{ inputs.allowed_identity_regex || format('https://github.com/{0}/.*', github.repository_owner) }}
         run: |
-          cosign verify-attestation --type spdx \
-            --certificate-identity-regexp="$IDENTITY_REGEX" \
-            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-            "$IMAGE" >/dev/null
+          cosign verify-attestation --type spdxjson --certificate-identity-regexp="$IDENTITY" \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com "$IMAGE" >/dev/null
 
       - name: Verify vuln attestation
         env:
           IMAGE: ${{ inputs.image_name }}@${{ inputs.digest }}
-          IDENTITY_REGEX: ${{ inputs.allowed_identity_regex || format('https://github.com/{0}/.*', github.repository_owner) }}
+          IDENTITY: ${{ inputs.allowed_identity_regex || format('https://github.com/{0}/.*', github.repository_owner) }}
         run: |
-          cosign verify-attestation --type vuln \
-            --certificate-identity-regexp="$IDENTITY_REGEX" \
-            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-            "$IMAGE" >/dev/null
+          cosign verify-attestation --type vuln --certificate-identity-regexp="$IDENTITY" \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com "$IMAGE" >/dev/null
