@@ -33,11 +33,11 @@ on:
       trivy_severity:
         description: 'Severity levels to report'
         type: string
-        default: 'HIGH,CRITICAL'   
+        default: 'MEDIUM,HIGH,CRITICAL'
     outputs:
       trivy_image_scan_passed:
         description: 'Whether Trivy image scan completed successfully (no vulns or skipped)'
-        value: ${{ jobs.trivy_image.outputs.scan_passed || 'true' }}  
+        value: ${{ jobs.trivy_image.outputs.scan_passed || 'true' }}
       vuln_attestation_attached:
         description: 'Whether vuln attestation was attached to image'
         value: ${{ jobs.trivy_image.outputs.attestation_attached || 'false' }}
@@ -101,6 +101,7 @@ jobs:
 
   trivy_image:
     name: Trivy Image Scan
+    # Gate on ref_protected: this job requires write permissions for attestation
     if: ${{ inputs.enable_trivy_image && inputs.image_ref != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -150,13 +151,13 @@ jobs:
 
       - name: Attest vulnerability scan
         id: attest
-        if: ${{ inputs.image_digest != ''}}
+        if: ${{ inputs.image_digest != '' }}
         env:
           IMAGE_REF: ${{ inputs.image_ref }}
           DIGEST: ${{ inputs.image_digest }}
           SARIF_FILE: trivy-image-scan-${{ github.workflow_sha }}-${{ github.run_number }}.sarif
         run: |
-          # Validate digest format
+          # Defense-in-depth: validate digest format before using in cosign
           if ! echo "$DIGEST" | grep -qE '^sha256:[a-f0-9]{64}$'; then
             echo "::error::Invalid image_digest format (expected sha256:<64-hex>): '$DIGEST'"
             exit 1
