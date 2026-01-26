@@ -36,7 +36,7 @@ on:
         default: 'HIGH,CRITICAL'
 
 permissions:
-  contents: read
+  contents: none
   issues: none
   pull-requests: none
   actions: none
