@@ -1,7 +1,17 @@
 # Reusable Sign and Verify Workflow
 # ==================================
 # Implements keyless container image signing using Sigstore/Cosign.
-# Supports both full verification (signature + attestations) and signature-only mode.
+# Always verifies ALL attestations (security-in-depth, no opt-out).
+#
+# Prerequisites (run these workflows first):
+#   1. reusable_publish_ghcr.yml - creates image with SBOM + SLSA provenance attestations
+#   2. reusable_vuln_scan.yml    - attaches vuln attestation
+#
+# Attestations verified (mandatory):
+#   - signature:       Keyless signature via Sigstore
+#   - slsaprovenance:  Build provenance (from docker/build-push-action)
+#   - spdx:            SBOM (from docker/build-push-action)
+#   - vuln:            Vulnerability scan results (from reusable_vuln_scan.yml)
 
 name: Reusable Sign and Verify
 
@@ -9,7 +19,7 @@ on:
   workflow_call:
     inputs:
       image_name:
-        description: 'Comma-separated full image names (e.g., ghcr.io/org/image,quay.io/org/image)'
+        description: 'Full image name (e.g., ghcr.io/org/image)'
         required: true
         type: string
       digest:
@@ -25,37 +35,28 @@ on:
         required: false
         type: string
         default: 'signing'
-      registry_username:
-        description: 'Username for GHCR login (defaults to github.actor)'
-        required: false
-        type: string
-      verify_attestations:
-        description: 'Verify SBOM and SLSA attestations (disable for promoted images)'
-        required: false
-        type: boolean
-        default: true
-      skip_sign:
-        description: 'Skip signing, only verify (for pre-promotion checks)'
-        required: false
-        type: boolean
-        default: false
     secrets:
-      registry_token:
-        description: 'Optional GHCR token. If not provided, falls back to GITHUB_TOKEN.'
-        required: false
       quay_username:
         description: 'Quay.io username/robot for login (only needed if signing quay.io images)'
         required: false
       quay_password:
         description: 'Quay.io password/token for login (only needed if signing quay.io images)'
         required: false
+    outputs:
+      digest:
+        description: 'Signed image digest (same as input, for chaining)'
+        value: ${{ jobs.sign-and-verify.outputs.digest }}
+      image:
+        description: 'Image reference that was signed/verified'
+        value: ${{ jobs.sign-and-verify.outputs.image }}
 
 permissions:
   packages: none
   id-token: none
 
 concurrency:
-  group: reusable-sign-verify-${{ inputs.image_name }}-${{ github.ref }}
+  # Use digest (fixed length) instead of image_name (variable, could be long)
+  group: reusable-sign-verify-${{ inputs.digest }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -65,8 +66,11 @@ jobs:
     permissions:
       packages: write   # Push signature as OCI artifact to registry
       id-token: write   # Request OIDC token for keyless signing via Sigstore
+    outputs:
+      digest: ${{ steps.output.outputs.digest }}
+      image: ${{ steps.output.outputs.image }}
 
-    environment: ${{ inputs.skip_sign && '' || inputs.sign_environment }}
+    environment: ${{ inputs.sign_environment }}
     steps:
       # Registry authentication for signature push
       - name: Log in to GHCR
@@ -74,8 +78,8 @@ jobs:
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:
           registry: ghcr.io
-          username: ${{ inputs.registry_username || github.actor }}
-          password: ${{ secrets.registry_token || github.token }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to Quay
         if: contains(inputs.image_name, 'quay.io')
@@ -85,101 +89,57 @@ jobs:
           username: ${{ secrets.quay_username }}
           password: ${{ secrets.quay_password }}
 
-      - name: Validate digest format
-        env:
-          DIGEST: ${{ inputs.digest }}
-          IMAGE_INPUT: ${{ inputs.image_name }}
-        run: |
-          # Ensure digest is a valid sha256 format (immutability guarantee)
-          # Protects against accidentally signing a tag (which can be overwritten)
-          if ! echo "$DIGEST" | grep -qE '^sha256:[a-f0-9]{64}$'; then
-            echo "::error::Invalid digest format. Expected 'sha256:<64-hex-chars>', got: '$DIGEST'"
-            exit 1
-          fi
-          # Warn if image_name contains a tag (ignored with digest, may indicate caller mistake)
-          # Common error: passing "image:tag" when "image" + digest is expected
-          if echo "$IMAGE_INPUT" | grep -qE ':[^/@]+$'; then
-            echo "::warning::image_name appears to contain a tag. Tags are ignored when using digest references."
-          fi
-
       - name: Install Cosign
         uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
 
-      - name: Sign images
-        if: ${{ !inputs.skip_sign }}
+      - name: Sign image
         env:
-          IMAGE_INPUT: ${{ inputs.image_name }}
+          IMAGE_NAME: ${{ inputs.image_name }}
           DIGEST: ${{ inputs.digest }}
         run: |
-          # Sign each image (digest ensures exact match to build)
-          IFS=',' read -ra IMAGES <<< "$IMAGE_INPUT"
-          for NAME in "${IMAGES[@]}"; do
-            NAME="${NAME// /}"  # trim whitespace
-            echo "Signing: ${NAME}@${DIGEST}"
-            cosign sign --yes "${NAME}@${DIGEST}"
-          done
+          echo "Signing: ${IMAGE_NAME}@${DIGEST}"
+          cosign sign --yes "${IMAGE_NAME}@${DIGEST}"
 
-      - name: Verify signature and attestations
+      - name: Verify signature
+        id: output
         env:
-          IMAGE_INPUT: ${{ inputs.image_name }}
-          DIGEST: ${{ inputs.digest }}
+          IMAGE: ${{ inputs.image_name }}@${{ inputs.digest }}
           IDENTITY_REGEX: ${{ inputs.allowed_identity_regex || format('https://github.com/{0}/.*', github.repository_owner) }}
-          VERIFY_ATTESTATIONS: ${{ inputs.verify_attestations }}
         run: |
-          # Use first image (all copies share same digest)
-          IMAGE="${IMAGE_INPUT%%,*}@${DIGEST}"
-          IMAGE="${IMAGE# }"  # trim leading space
+          cosign verify \
+            --certificate-identity-regexp="$IDENTITY_REGEX" \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+            "$IMAGE" >/dev/null
 
-          # Debug: Show what identity we're looking for vs what the signature has
-          echo "::group::Debug: Certificate Identity Info"
-          echo "Expected identity regex: $IDENTITY_REGEX"
-          echo "Expected OIDC issuer: https://token.actions.githubusercontent.com"
-          echo "Image: $IMAGE"
-          echo ""
-          echo "Actual certificate from signature (using permissive verification):"
-          if cosign verify \
-            --certificate-identity-regexp='.*' \
-            --certificate-oidc-issuer-regexp='.*' \
-            --output json "$IMAGE" 2>/dev/null | jq -r '.[0].optional // empty | {
-              "Subject": .Subject,
-              "Issuer": .Issuer, 
-              "OIDC Issuer": ."1.3.6.1.4.1.57264.1.1",
-              "GitHub Workflow Trigger": ."1.3.6.1.4.1.57264.1.2",
-              "GitHub Workflow SHA": ."1.3.6.1.4.1.57264.1.3",
-              "GitHub Workflow Name": ."1.3.6.1.4.1.57264.1.4",
-              "GitHub Workflow Repository": ."1.3.6.1.4.1.57264.1.5",
-              "GitHub Workflow Ref": ."1.3.6.1.4.1.57264.1.6"
-            }' 2>/dev/null; then
-            echo "✓ Signature found and decoded"
-          else
-            echo "⚠ Could not decode certificate - signature may not exist or different format"
-            # Try raw output
-            cosign verify --certificate-identity-regexp='.*' --certificate-oidc-issuer-regexp='.*' "$IMAGE" 2>&1 || true
-          fi
-          echo "::endgroup::"
+          echo "digest=${{ inputs.digest }}" >> "$GITHUB_OUTPUT"
+          echo "image=${{ inputs.image_name }}" >> "$GITHUB_OUTPUT"
 
-          COSIGN_FLAGS=(
-            "--certificate-identity-regexp=$IDENTITY_REGEX"
-            "--certificate-oidc-issuer=https://token.actions.githubusercontent.com"
-          )
-
-          echo "Verifying signature: $IMAGE"
-          cosign verify "${COSIGN_FLAGS[@]}" "$IMAGE"
-
-          if [[ "$VERIFY_ATTESTATIONS" == "true" ]]; then
-            echo "Verifying SLSA provenance: $IMAGE"
-            cosign verify-attestation "${COSIGN_FLAGS[@]}" --type slsaprovenance "$IMAGE"
-
-            echo "Verifying SBOM: $IMAGE"
-            cosign verify-attestation "${COSIGN_FLAGS[@]}" --type spdx "$IMAGE"
-          fi
-
-      - name: Summary
+      - name: Verify SLSA provenance
         env:
-          VERIFY_ATTESTATIONS: ${{ inputs.verify_attestations }}
-          SKIP_SIGN: ${{ inputs.skip_sign }}
+          IMAGE: ${{ inputs.image_name }}@${{ inputs.digest }}
+          IDENTITY_REGEX: ${{ inputs.allowed_identity_regex || format('https://github.com/{0}/.*', github.repository_owner) }}
         run: |
-          echo "All verifications passed!"
-          echo "Signed: $([[ "$SKIP_SIGN" == "true" ]] && echo "No (verify only)" || echo "Yes")"
-          echo "Attestations: $([[ "$VERIFY_ATTESTATIONS" == "true" ]] && echo "SLSA + SBOM" || echo "signature only")"
+          cosign verify-attestation --type slsaprovenance \
+            --certificate-identity-regexp="$IDENTITY_REGEX" \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+            "$IMAGE" >/dev/null
 
+      - name: Verify SBOM
+        env:
+          IMAGE: ${{ inputs.image_name }}@${{ inputs.digest }}
+          IDENTITY_REGEX: ${{ inputs.allowed_identity_regex || format('https://github.com/{0}/.*', github.repository_owner) }}
+        run: |
+          cosign verify-attestation --type spdx \
+            --certificate-identity-regexp="$IDENTITY_REGEX" \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+            "$IMAGE" >/dev/null
+
+      - name: Verify vuln attestation
+        env:
+          IMAGE: ${{ inputs.image_name }}@${{ inputs.digest }}
+          IDENTITY_REGEX: ${{ inputs.allowed_identity_regex || format('https://github.com/{0}/.*', github.repository_owner) }}
+        run: |
+          cosign verify-attestation --type vuln \
+            --certificate-identity-regexp="$IDENTITY_REGEX" \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+            "$IMAGE" >/dev/null
