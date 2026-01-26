@@ -74,7 +74,10 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      actions: read
+      packages: write         # Required for validation, won't be used
       security-events: write
+      id-token: write         # Required for validation, won't be used
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -110,9 +113,11 @@ jobs:
       attestation_attached: ${{ steps.attest.outputs.attached }}
     permissions:
       # step-security: ignore packages:write - required for cosign vuln attestation
-      packages: write         # write needed for attestation push
+      contents: read
+      actions: read
+      packages: write         # Required for validation, won't be used
       security-events: write
-      id-token: write         # needed for keyless signing of attestation
+      id-token: write         # Required for validation, won't be used
     steps:
       - name: Login to GHCR
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
