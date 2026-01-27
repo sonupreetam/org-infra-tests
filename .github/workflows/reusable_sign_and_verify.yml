@@ -101,47 +101,11 @@ jobs:
       - name: Verify signature
         run: cosign verify --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
 
-      - name: Debug - List all attestations
-        if: ${{ failure() || success() }}
-        run: |
-          echo "=== Cosign version ==="
-          cosign version
-          echo ""
-          echo "=== Image reference ==="
-          echo "$IMAGE"
-          echo ""
-          echo "=== Expected identity pattern ==="
-          echo "$IDENTITY"
-          echo ""
-          echo "=== Fetching attestations (predicateType only) ==="
-          # List all attestation predicate types attached to the image
-          cosign tree "$IMAGE" 2>/dev/null || echo "cosign tree not available"
-          echo ""
-          echo "=== Raw attestation download (for predicate inspection) ==="
-          cosign download attestation "$IMAGE" 2>/dev/null | jq -r '.payload' | base64 -d | jq -c '{predicateType: .predicateType}' 2>/dev/null || echo "No attestations found or parse error"
-
       - name: Verify SLSA provenance
-        id: verify-slsa
-        run: |
-          echo "Verifying SLSA provenance with:"
-          echo "  --type https://slsa.dev/provenance/v1"
-          echo "  --certificate-identity-regexp=$IDENTITY"
-          echo "  --certificate-oidc-issuer=$OIDC_ISSUER"
-          echo "  image=$IMAGE"
-          echo ""
-          if ! cosign verify-attestation --type https://slsa.dev/provenance/v1 --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"; then
-            echo ""
-            echo "::error::SLSA provenance verification failed"
-            echo ""
-            echo "=== Debug: Listing all attestation predicate types ==="
-            cosign download attestation "$IMAGE" 2>/dev/null | while read -r line; do
-              echo "$line" | jq -r '.payload' | base64 -d | jq -c '{predicateType: .predicateType}' 2>/dev/null
-            done || echo "Could not parse attestations"
-            exit 1
-          fi
+        run: cosign verify-attestation --type https://slsa.dev/provenance/v1 --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
 
       - name: Verify SBOM
-        run: cosign verify-attestation --type https://spdx.dev/Document --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
+        run: cosign verify-attestation --type https://spdx.dev/Document/v2.3 --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
 
       - name: Verify vulnerability scan
         run: cosign verify-attestation --type vuln --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
