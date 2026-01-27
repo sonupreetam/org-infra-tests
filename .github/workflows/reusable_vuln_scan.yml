@@ -101,7 +101,7 @@ jobs:
 
   trivy_image:
     name: Trivy Image Scan
-    # Scan runs on all branches; attestation only on protected branches (see step conditions)
+    # Gate on ref_protected: this job requires write permissions for attestation
     if: ${{ inputs.enable_trivy_image && inputs.image_ref != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -125,7 +125,7 @@ jobs:
         with:
           scan-type: 'image'
           scanners: 'vuln'
-          image-ref: ${{ inputs.image_ref }}
+          image-ref: ${{ inputs.image_digest != '' && format('{0}@{1}', inputs.image_ref, inputs.image_digest) || inputs.image_ref }}
           severity: ${{ inputs.trivy_severity }}
           ignore-unfixed: true
           format: 'sarif'
