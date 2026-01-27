@@ -74,10 +74,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      actions: read
-      packages: write         # Required for validation, won't be used
       security-events: write
-      id-token: write         # Required for validation, won't be used
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -104,7 +101,7 @@ jobs:
 
   trivy_image:
     name: Trivy Image Scan
-    # Gate on ref_protected: this job requires write permissions for attestation
+    # Scan runs on all branches; attestation only on protected branches (see step conditions)
     if: ${{ inputs.enable_trivy_image && inputs.image_ref != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -112,12 +109,9 @@ jobs:
       scan_passed: ${{ steps.scan_result.outputs.passed }}
       attestation_attached: ${{ steps.attest.outputs.attached }}
     permissions:
-      # step-security: ignore packages:write - required for cosign vuln attestation
-      contents: read
-      actions: read
-      packages: write         # Required for validation, won't be used
-      security-events: write
-      id-token: write         # Required for validation, won't be used
+      packages: write         # Push attestation to registry
+      security-events: write  # Upload SARIF
+      id-token: write         # Keyless signing of attestation
     steps:
       - name: Login to GHCR
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
