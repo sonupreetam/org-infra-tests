@@ -50,7 +50,8 @@ permissions:
   actions: none
 
 concurrency:
-  group: reusable-vuln-scan-${{ github.workflow }}-${{ github.ref }}
+  # Include image_ref to differentiate source scan (empty) vs image scan (has ref)
+  group: vuln-scan-${{ github.workflow }}-${{ github.ref }}-${{ inputs.image_ref || 'source' }}
   cancel-in-progress: true
 
 jobs:
