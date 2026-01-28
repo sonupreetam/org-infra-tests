@@ -20,7 +20,9 @@ jobs:
     permissions:
       contents: read
       actions: read
+      packages: write         # Required for reusable workflow validation (trivy_image job)
       security-events: write
+      id-token: write         # Required for reusable workflow validation (trivy_image job)
     uses: sonupreetam/org-infra-tests/.github/workflows/reusable_vuln_scan.yml@main
     # TODO: Re-add 'enable_trivy_source: true' once reusable_vuln_scan.yml is merged to main
     # with:
