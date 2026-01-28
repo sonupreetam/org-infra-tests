@@ -125,7 +125,7 @@ jobs:
         with:
           scan-type: 'image'
           scanners: 'vuln'
-          image-ref: ${{ inputs.image_digest != '' && format('{0}@{1}', inputs.image_ref, inputs.image_digest) || inputs.image_ref }}
+          image-ref: ${{ inputs.image_ref }}
           severity: ${{ inputs.trivy_severity }}
           ignore-unfixed: true
           format: 'sarif'
