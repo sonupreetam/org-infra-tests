@@ -1,8 +1,14 @@
 # Reusable Promote Image Workflow
 # ================================
-# Promotes container images from one registry to another (e.g., GHCR → Quay).
-# Uses cosign copy to preserve signatures and attestations (SBOM, provenance).
-
+# Promotes container images between registries with supply chain security.
+#
+# Security features:
+#   - Signature verification before promotion (Sigstore/Cosign)
+#   - Digest-based references (immutable)
+#   - Preserves SBOM and provenance attestations
+#   - Tag immutability protection with audit logging
+#
+# Usage: called from release workflows after images pass CI/security gates.
 
 name: Reusable Promote Image
 
@@ -51,6 +57,11 @@ on:
         description: 'Regex for Cosign certificate identity verification'
         required: false
         type: string
+      fail_if_dest_exists:
+        description: 'Fail if destination tag already exists (immutability protection)'
+        required: false
+        type: boolean
+        default: true
     secrets:
       source_token:
         description: 'Token for source registry (falls back to GITHUB_TOKEN for GHCR)'
@@ -74,8 +85,8 @@ permissions:
   packages: none
 
 concurrency:
-  group: reusable-promote-${{ inputs.source_image }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: reusable-promote-${{ inputs.source_image }}-${{ inputs.dest_tag }}
+  cancel-in-progress: false  # Never cancel promotions mid-flight
 
 jobs:
   promote:
@@ -110,6 +121,23 @@ jobs:
         run: |
           echo "$PASSWORD" | crane auth login "$REGISTRY" -u "$USERNAME" --password-stdin
           echo "$PASSWORD" | cosign login "$REGISTRY" -u "$USERNAME" --password-stdin
+
+      - name: Check destination tag availability
+        env:
+          DEST: ${{ inputs.dest_registry }}/${{ inputs.dest_image || inputs.source_image }}:${{ inputs.dest_tag }}
+          FAIL_IF_EXISTS: ${{ inputs.fail_if_dest_exists }}
+        run: |
+          if crane manifest "$DEST" &>/dev/null; then
+            if [[ "$FAIL_IF_EXISTS" == "true" ]]; then
+              echo "::error::Destination tag already exists: $DEST"
+              echo "Set fail_if_dest_exists: false to overwrite (breaks immutability)"
+              exit 1
+            else
+              echo "::warning::Overwriting existing tag: $DEST (immutability bypassed)"
+            fi
+          else
+            echo "✓ Destination tag available"
+          fi
 
       - name: Get source digest
         id: source
