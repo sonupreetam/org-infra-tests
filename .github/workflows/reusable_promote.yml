@@ -212,4 +212,3 @@ jobs:
           fi
 
           echo "Promotion complete"
-
