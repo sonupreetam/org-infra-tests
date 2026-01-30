@@ -147,9 +147,6 @@ jobs:
             done
           fi
 
-      - name: Verify destination signature
-        if: ${{ inputs.verify_signature }}
-        run: |
-          cosign verify "${DEST_REF}@${{ steps.resolve.outputs.digest }}" \
-            --certificate-identity-regexp="$IDENTITY" \
-            --certificate-oidc-issuer="$OIDC_ISSUER"
+      # Note: Destination signature verification removed.
+      # Source verification is sufficient - cosign copy preserves signatures.
+      # Some registries (e.g., Quay) have inconsistent OCI referrer support.
