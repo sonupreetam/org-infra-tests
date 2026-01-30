@@ -1,5 +1,7 @@
 # Reusable Promote Image Workflow
 # Promotes images between registries with signature verification and attestation preservation.
+# Source verification is sufficient - cosign copy preserves signatures.
+# Some registries (e.g., Quay) have inconsistent OCI referrer support.
 
 name: Reusable Promote Image
 
@@ -87,51 +89,83 @@ jobs:
       - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
       - uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
 
+      - name: Validate inputs
+        env:
+          SOURCE_TAG: ${{ inputs.source_tag }}
+          DEST_TAG: ${{ inputs.dest_tag }}
+        run: |
+          # Block shell metacharacters in tags (primary injection vector)
+          safe='^[a-zA-Z0-9._-]+$'
+          [[ "$SOURCE_TAG" =~ $safe ]] || { echo "::error::Invalid source_tag"; exit 1; }
+          [[ "$DEST_TAG" =~ $safe ]] || { echo "::error::Invalid dest_tag"; exit 1; }
+
       - name: Authenticate registries
         env:
           SRC_TOKEN: ${{ secrets.source_token || secrets.GITHUB_TOKEN }}
           DEST_USER: ${{ secrets.dest_username }}
           DEST_PASS: ${{ secrets.dest_password }}
+          SRC_REGISTRY: ${{ inputs.source_registry }}
+          DEST_REGISTRY: ${{ inputs.dest_registry }}
+          ACTOR: ${{ github.actor }}
         run: |
-          echo "$SRC_TOKEN" | crane auth login ${{ inputs.source_registry }} -u ${{ github.actor }} --password-stdin
-          echo "$SRC_TOKEN" | cosign login ${{ inputs.source_registry }} -u ${{ github.actor }} --password-stdin
-          echo "$DEST_PASS" | crane auth login ${{ inputs.dest_registry }} -u "$DEST_USER" --password-stdin
-          echo "$DEST_PASS" | cosign login ${{ inputs.dest_registry }} -u "$DEST_USER" --password-stdin
+          echo "$SRC_TOKEN" | crane auth login "$SRC_REGISTRY" -u "$ACTOR" --password-stdin
+          echo "$SRC_TOKEN" | cosign login "$SRC_REGISTRY" -u "$ACTOR" --password-stdin
+          echo "$DEST_PASS" | crane auth login "$DEST_REGISTRY" -u "$DEST_USER" --password-stdin
+          echo "$DEST_PASS" | cosign login "$DEST_REGISTRY" -u "$DEST_USER" --password-stdin
 
       - name: Resolve source digest
         id: resolve
+        env:
+          SOURCE_TAG: ${{ inputs.source_tag }}
         run: |
-          DIGEST=$(crane digest "${SOURCE_REF}:${{ inputs.source_tag }}") || {
-            echo "::error::Source not found: ${SOURCE_REF}:${{ inputs.source_tag }}"
+          DIGEST=$(crane digest "${SOURCE_REF}:${SOURCE_TAG}") || {
+            echo "::error::Source not found: ${SOURCE_REF}:${SOURCE_TAG}"
             exit 1
           }
+          
+          # Validate digest format (sha256:64-hex-chars)
+          if [[ ! "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::Invalid digest format: $DIGEST (expected: sha256:<64-hex-chars>)"
+            exit 1
+          fi
+          
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Resolved digest: ${DIGEST}"
 
       - name: Check destination availability
         if: ${{ inputs.fail_if_dest_exists }}
+        env:
+          DEST_TAG: ${{ inputs.dest_tag }}
         run: |
-          if crane manifest "${DEST_REF}:${{ inputs.dest_tag }}" &>/dev/null; then
-            echo "::error::Tag exists: ${DEST_REF}:${{ inputs.dest_tag }}"
+          if crane manifest "${DEST_REF}:${DEST_TAG}" &>/dev/null; then
+            echo "::error::Tag exists: ${DEST_REF}:${DEST_TAG}"
             echo "Use fail_if_dest_exists: false to overwrite"
             exit 1
           fi
 
       - name: Verify source signature
         if: ${{ inputs.verify_signature }}
+        env:
+          DIGEST: ${{ steps.resolve.outputs.digest }}
         run: |
-          cosign verify "${SOURCE_REF}@${{ steps.resolve.outputs.digest }}" \
+          echo "Verifying signature for ${SOURCE_REF}@${DIGEST}..."
+          cosign verify "${SOURCE_REF}@${DIGEST}" \
             --certificate-identity-regexp="$IDENTITY" \
             --certificate-oidc-issuer="$OIDC_ISSUER"
+          echo "✓ Source signature verified"
 
       - name: Promote image
         env:
           DIGEST: ${{ steps.resolve.outputs.digest }}
           SOURCE_TAG: ${{ inputs.source_tag }}
+          DEST_TAG: ${{ inputs.dest_tag }}
+          INCLUDE_SHA_TAGS: ${{ inputs.include_sha_tags }}
+          ADDITIONAL_TAGS: ${{ inputs.additional_tags }}
         run: |
-          cosign copy "${SOURCE_REF}@${DIGEST}" "${DEST_REF}:${{ inputs.dest_tag }}"
+          cosign copy "${SOURCE_REF}@${DIGEST}" "${DEST_REF}:${DEST_TAG}"
 
           # SHA tags for immutability (long + short)
-          if [[ "${{ inputs.include_sha_tags }}" == "true" ]]; then
+          if [[ "$INCLUDE_SHA_TAGS" == "true" ]]; then
             crane tag "${DEST_REF}@${DIGEST}" "${SOURCE_TAG}"
             # Short SHA: first 7 chars after 'sha-' prefix
             if [[ "$SOURCE_TAG" =~ ^sha-([a-f0-9]+)$ ]]; then
@@ -140,13 +174,10 @@ jobs:
           fi
 
           # Additional custom tags
-          if [[ -n "${{ inputs.additional_tags }}" ]]; then
-            IFS=',' read -ra TAGS <<< "${{ inputs.additional_tags }}"
+          if [[ -n "$ADDITIONAL_TAGS" ]]; then
+            IFS=',' read -ra TAGS <<< "$ADDITIONAL_TAGS"
             for TAG in "${TAGS[@]}"; do
               crane tag "${DEST_REF}@${DIGEST}" "${TAG// /}"
             done
           fi
 
-      # Note: Destination signature verification removed.
-      # Source verification is sufficient - cosign copy preserves signatures.
-      # Some registries (e.g., Quay) have inconsistent OCI referrer support.
