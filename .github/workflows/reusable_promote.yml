@@ -143,6 +143,25 @@ jobs:
             exit 1
           fi
 
+      - name: Check for digest reuse
+        env:
+          DIGEST: ${{ steps.resolve.outputs.digest }}
+        run: |
+          # Check if this digest already exists in destination with other tags
+          existing_tags=$(crane ls "${DEST_REF}" 2>/dev/null | head -50 || true)
+          if [[ -n "$existing_tags" ]]; then
+            matching_tags=""
+            for tag in $existing_tags; do
+              tag_digest=$(crane digest "${DEST_REF}:${tag}" 2>/dev/null || true)
+              if [[ "$tag_digest" == "$DIGEST" ]]; then
+                matching_tags="${matching_tags} ${tag}"
+              fi
+            done
+            if [[ -n "$matching_tags" ]]; then
+              echo "::warning::Digest already exists in destination with tags:${matching_tags}"
+            fi
+          fi
+
       - name: Verify source signature
         if: ${{ inputs.verify_signature }}
         env:
