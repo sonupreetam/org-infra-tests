@@ -33,7 +33,7 @@ on:
       trivy_severity:
         description: 'Severity levels to report'
         type: string
-        default: 'MEDIUM,HIGH,CRITICAL'
+        default: 'HIGH,CRITICAL'
     outputs:
       trivy_image_scan_passed:
         description: 'Whether Trivy image scan completed successfully (no vulns or skipped)'
