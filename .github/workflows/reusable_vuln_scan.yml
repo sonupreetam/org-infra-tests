@@ -92,7 +92,9 @@ jobs:
           ignore-unfixed: true
           format: 'sarif'
           output: 'trivy-source-scan-${{ github.workflow_sha }}-${{ github.run_number }}.sarif'
-          exit-code: '1'
+          # NOTE: exit-code 0 because trivy-action's exit-code behavior is inconsistent
+          # with SARIF format. We parse SARIF to check for actual findings instead.
+          exit-code: '0'
 
       - name: Upload SARIF
         if: ${{ always() }}
@@ -100,6 +102,13 @@ jobs:
         with:
           sarif_file: 'trivy-source-scan-${{ github.workflow_sha }}-${{ github.run_number }}.sarif'
           category: 'trivy-source'
+
+      - name: Fail on findings
+        env:
+          SARIF_FILE: trivy-source-scan-${{ github.workflow_sha }}-${{ github.run_number }}.sarif
+        run: |
+          COUNT=$(jq '[.runs[].results[] | select(.level == "error" or .level == "warning")] | length' "$SARIF_FILE")
+          [ "$COUNT" -eq 0 ] || { echo "::error::Found $COUNT HIGH/CRITICAL findings"; exit 1; }
 
   trivy_image:
     name: Trivy Image Scan
@@ -133,12 +142,9 @@ jobs:
           ignore-unfixed: true
           format: 'sarif'
           output: 'trivy-image-scan-${{ github.workflow_sha }}-${{ github.run_number }}.sarif'
-          exit-code: '1'
-
-      - name: Mark scan passed
-        id: scan_result
-        if: ${{ steps.trivy.outcome == 'success' }}
-        run: echo "passed=true" >> "$GITHUB_OUTPUT"
+          # NOTE: exit-code 0 because trivy-action's exit-code behavior is inconsistent
+          # with SARIF format. We parse SARIF to check for actual findings instead.
+          exit-code: '0'
 
       - name: Upload SARIF
         if: ${{ always() }}
@@ -146,6 +152,15 @@ jobs:
         with:
           sarif_file: 'trivy-image-scan-${{ github.workflow_sha }}-${{ github.run_number }}.sarif'
           category: 'trivy-image'
+
+      - name: Check scan result
+        id: scan_result
+        if: ${{ steps.trivy.outcome == 'success' }}
+        env:
+          SARIF_FILE: trivy-image-scan-${{ github.workflow_sha }}-${{ github.run_number }}.sarif
+        run: |
+          COUNT=$(jq '[.runs[].results[] | select(.level == "error" or .level == "warning")] | length' "$SARIF_FILE")
+          [ "$COUNT" -eq 0 ] && echo "passed=true" >> "$GITHUB_OUTPUT" || { echo "passed=false" >> "$GITHUB_OUTPUT"; echo "::error::Found $COUNT HIGH/CRITICAL vulns"; exit 1; }
 
       # Attestation: attach vuln scan proof to image (travels with cosign copy)
       - name: Install Cosign
