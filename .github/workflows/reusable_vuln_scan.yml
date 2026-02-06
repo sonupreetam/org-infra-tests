@@ -109,7 +109,7 @@ jobs:
         env:
           SARIF_FILE: trivy-source-scan-${{ github.workflow_sha }}-${{ github.run_number }}.sarif
         run: |
-          COUNT=$(jq '[.runs[].results[] | select(.level == "error" or .level == "warning")] | length' "$SARIF_FILE")
+          COUNT=$(jq '[.runs[].results[] | select(.level == "error")] | length' "$SARIF_FILE")
           [ "$COUNT" -eq 0 ] || { echo "::error::Found $COUNT HIGH/CRITICAL findings"; exit 1; }
 
   trivy_image:
@@ -161,7 +161,7 @@ jobs:
         env:
           SARIF_FILE: trivy-image-scan-${{ github.workflow_sha }}-${{ github.run_number }}.sarif
         run: |
-          COUNT=$(jq '[.runs[].results[] | select(.level == "error" or .level == "warning")] | length' "$SARIF_FILE")
+          COUNT=$(jq '[.runs[].results[] | select(.level == "error")] | length' "$SARIF_FILE")
           [ "$COUNT" -eq 0 ] && echo "passed=true" >> "$GITHUB_OUTPUT" || { echo "passed=false" >> "$GITHUB_OUTPUT"; echo "::error::Found $COUNT HIGH/CRITICAL vulns"; exit 1; }
 
       # Attestation: attach vuln scan proof to image (travels with cosign copy)
