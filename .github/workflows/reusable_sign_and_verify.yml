@@ -101,13 +101,13 @@ jobs:
         run: cosign sign --yes "$IMAGE"
 
       - name: Verify signature
-        run: cosign verify -v --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
+        run: cosign verify --verbose --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
 
       - name: Verify SLSA provenance
-        run: cosign verify-attestation -v --type https://slsa.dev/provenance/v1 --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
+        run: cosign verify-attestation --verbose --type https://slsa.dev/provenance/v1 --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
 
       - name: Verify SBOM
-        run: cosign verify-attestation -v --type https://spdx.dev/Document/v2.3 --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
+        run: cosign verify-attestation --verbose --type https://spdx.dev/Document/v2.3 --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
 
       - name: Verify vulnerability scan
-        run: cosign verify-attestation -v --type vuln --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
+        run: cosign verify-attestation --verbose --type vuln --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
