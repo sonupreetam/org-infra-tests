@@ -95,17 +95,20 @@ jobs:
       - name: Install Cosign
         uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
 
+      - name: Check Cosign version
+        run: cosign version
+
       - name: Sign image
         run: cosign sign --yes "$IMAGE"
 
       - name: Verify signature
-        run: cosign verify --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
+        run: cosign verify -v --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
 
       - name: Verify SLSA provenance
-        run: cosign verify-attestation --type https://slsa.dev/provenance/v1 --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
+        run: cosign verify-attestation -v --type https://slsa.dev/provenance/v1 --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
 
       - name: Verify SBOM
-        run: cosign verify-attestation --type https://spdx.dev/Document/v2.3 --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
+        run: cosign verify-attestation -v --type https://spdx.dev/Document/v2.3 --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
 
       - name: Verify vulnerability scan
-        run: cosign verify-attestation --type vuln --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
+        run: cosign verify-attestation -v --type vuln --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
