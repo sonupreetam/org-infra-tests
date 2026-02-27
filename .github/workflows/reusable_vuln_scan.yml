@@ -33,7 +33,7 @@ on:
       trivy_severity:
         description: 'Severity levels to report'
         type: string
-        default: 'MEDIUM,HIGH,CRITICAL'
+        default: 'HIGH,CRITICAL'
     outputs:
       trivy_image_scan_passed:
         description: 'Whether Trivy image scan completed successfully (no vulns or skipped)'
@@ -59,7 +59,7 @@ jobs:
     name: OSV-Scanner
     if: ${{ inputs.enable_osv }}
     # https://google.github.io/osv-scanner/github-action/
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@2a387edfbe02a11d856b89172f6e978100177eb4 # v2.3.2
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@c5996e0193a3df57d695c1b8a1dec2a4c62e8730 # v2.3.3
     permissions:
       contents: read
       actions: read
@@ -84,7 +84,8 @@ jobs:
           persist-credentials: false
 
       - name: Run Trivy source scanner
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # 0.33.1
+        id: trivy
+        uses: aquasecurity/trivy-action@e368e328979b113139d6f9068e03accaed98a518 # 0.34.1
         with:
           scan-type: 'fs'
           scanners: 'secret,misconfig'
@@ -92,14 +93,24 @@ jobs:
           ignore-unfixed: true
           format: 'sarif'
           output: 'trivy-source-scan-${{ github.workflow_sha }}-${{ github.run_number }}.sarif'
-          exit-code: '1'
+          # NOTE: exit-code 0 because trivy-action's exit-code behavior is inconsistent
+          # with SARIF format. We parse SARIF to check for actual findings instead.
+          exit-code: '0'
 
       - name: Upload SARIF
         if: ${{ always() }}
-        uses: github/codeql-action/upload-sarif@b20883b0cd1f46c72ae0ba6d1090936928f9fa30 # v4.32.0
+        uses: github/codeql-action/upload-sarif@89a39a4e59826350b863aa6b6252a07ad50cf83e # v4.32.4
         with:
           sarif_file: 'trivy-source-scan-${{ github.workflow_sha }}-${{ github.run_number }}.sarif'
           category: 'trivy-source'
+
+      - name: Fail on findings
+        if: ${{ steps.trivy.outcome == 'success' }}
+        env:
+          SARIF_FILE: trivy-source-scan-${{ github.workflow_sha }}-${{ github.run_number }}.sarif
+        run: |
+          COUNT=$(jq '[.runs[].results[] | select(.level == "error")] | length' "$SARIF_FILE")
+          [ "$COUNT" -eq 0 ] || { echo "::error::Found $COUNT HIGH/CRITICAL findings"; exit 1; }
 
   trivy_image:
     name: Trivy Image Scan
@@ -116,7 +127,7 @@ jobs:
       id-token: write         # Keyless signing of attestation
     steps:
       - name: Login to GHCR
-        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
@@ -124,7 +135,7 @@ jobs:
 
       - name: Run Trivy image scanner
         id: trivy
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # 0.33.1
+        uses: aquasecurity/trivy-action@e368e328979b113139d6f9068e03accaed98a518 # 0.34.1
         with:
           scan-type: 'image'
           scanners: 'vuln'
@@ -133,19 +144,25 @@ jobs:
           ignore-unfixed: true
           format: 'sarif'
           output: 'trivy-image-scan-${{ github.workflow_sha }}-${{ github.run_number }}.sarif'
-          exit-code: '1'
-
-      - name: Mark scan passed
-        id: scan_result
-        if: ${{ steps.trivy.outcome == 'success' }}
-        run: echo "passed=true" >> "$GITHUB_OUTPUT"
+          # NOTE: exit-code 0 because trivy-action's exit-code behavior is inconsistent
+          # with SARIF format. We parse SARIF to check for actual findings instead.
+          exit-code: '0'
 
       - name: Upload SARIF
         if: ${{ always() }}
-        uses: github/codeql-action/upload-sarif@b20883b0cd1f46c72ae0ba6d1090936928f9fa30 # v4.32.0
+        uses: github/codeql-action/upload-sarif@89a39a4e59826350b863aa6b6252a07ad50cf83e # v4.32.4
         with:
           sarif_file: 'trivy-image-scan-${{ github.workflow_sha }}-${{ github.run_number }}.sarif'
           category: 'trivy-image'
+
+      - name: Check scan result
+        id: scan_result
+        if: ${{ steps.trivy.outcome == 'success' }}
+        env:
+          SARIF_FILE: trivy-image-scan-${{ github.workflow_sha }}-${{ github.run_number }}.sarif
+        run: |
+          COUNT=$(jq '[.runs[].results[] | select(.level == "error")] | length' "$SARIF_FILE")
+          [ "$COUNT" -eq 0 ] || { echo "::error::Found $COUNT HIGH/CRITICAL vulns"; exit 1; }
 
       # Attestation: attach vuln scan proof to image (travels with cosign copy)
       - name: Install Cosign

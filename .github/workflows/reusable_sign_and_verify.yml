@@ -59,7 +59,6 @@ concurrency:
 
 jobs:
   sign-and-verify:
-    if: ${{ github.ref_protected }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
