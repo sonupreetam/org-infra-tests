@@ -3,14 +3,15 @@
 # Signs container images with Sigstore keyless signing and verifies all attestations.
 #
 # Prerequisites (attestations must exist before calling this workflow):
-#   - SLSA provenance: from reusable_push_ghcr.yml (actions/attest-build-provenance)
-#   - SBOM:            from reusable_push_ghcr.yml (actions/attest-sbom)
+#   - SLSA provenance: from reusable_publish_ghcr.yml or reusable_publish_oras.yml
+#   - SBOM:            from reusable_publish_ghcr.yml or reusable_publish_oras.yml
 #   - Vuln scan:       from reusable_vuln_scan.yml (cosign attest --type vuln)
+#                      Set enable_verify_vuln: false for ORAS data-only artifacts.
 #
 # Security guarantees:
 #   - All attestations are Sigstore-signed with Rekor transparency log
 #   - Certificate identity and OIDC issuer are verified
-#   - Workflow fails if ANY attestation is missing or invalid
+#   - Workflow fails if ANY required attestation is missing or invalid
 
 name: Reusable Sign and Verify
 
@@ -34,6 +35,11 @@ on:
         required: false
         type: string
         default: ''
+      enable_verify_vuln:
+        description: 'Verify vulnerability scan attestation. Set false for data-only OCI artifacts (e.g., ORAS pushes) that have no vuln attestation.'
+        required: false
+        type: boolean
+        default: true
     secrets:
       quay_username:
         description: 'Quay.io username (only for quay.io images)'
@@ -110,4 +116,5 @@ jobs:
         run: cosign verify-attestation --verbose --type https://spdx.dev/Document/v2.3 --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE" > /dev/null
 
       - name: Verify vulnerability scan
+        if: ${{ inputs.enable_verify_vuln }}
         run: cosign verify-attestation --verbose --type vuln --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE" > /dev/null
