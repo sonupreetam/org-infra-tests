@@ -1,3 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+# Test mirror: sonupreetam/org-infra-tests
+# Upstream: complytime/org-infra/.github/workflows/reusable_publish_oras.yml
+# Bump the SHA in callers when this file changes.
+# ---
 # Reusable Publish OCI Artifact (ORAS) and Gemara policy bundle
 # ============================================================
 # Two modes in one workflow (align with go-gemara bundle + ORAS per-path flows):
@@ -5,9 +10,6 @@
 #   - publish_mode: gemara — Pinned go-gemara pack composite, same attestations.
 # Downstream: reusable_sign_and_verify (set verify_vuln: false for no vuln attestation);
 # resuable_publish_quay for Quay.
-#
-# Gemara compatibility: call sites may keep using reusable_publish_gemara_oci.yml, which
-# delegates here with publish_mode: gemara.
 
 name: Reusable Publish OCI Artifact (ORAS)
 
@@ -304,4 +306,3 @@ jobs:
           subject-digest: ${{ steps.export_digest.outputs.digest }}
           sbom-path: sbom.spdx.json
           push-to-registry: true
-
