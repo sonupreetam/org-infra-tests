@@ -159,7 +159,9 @@ jobs:
 
       - name: Verify destination signature
         if: ${{ inputs.verify_signature }}
+        # Quay often indexes cosign signature/attestation relations on the tag; verify by digest
+        # can return "no signatures found" even after a successful cosign copy --only=… (same ref).
         run: |
-          cosign verify "${DEST_REF}@${{ steps.resolve.outputs.digest }}" \
+          cosign verify "${DEST_REF}:${{ inputs.dest_tag }}" \
             --certificate-identity-regexp="$IDENTITY" \
             --certificate-oidc-issuer="$OIDC_ISSUER"
