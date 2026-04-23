@@ -94,6 +94,7 @@ jobs:
       OIDC_ISSUER: https://token.actions.githubusercontent.com
     steps:
       - uses: imjasonh/setup-crane@6da1ae018866400525525ce74ff892880c099987
+      - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3
       - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003
 
       - name: Authenticate registries
@@ -137,11 +138,10 @@ jobs:
           DIGEST: ${{ steps.resolve.outputs.digest }}
           SOURCE_TAG: ${{ inputs.source_tag }}
         run: |
-          cosign copy "${SOURCE_REF}@${DIGEST}" "${DEST_REF}:${{ inputs.dest_tag }}"
-          # Ensure cosign signature + attestation (SLSA/SBOM) objects land on the destination; some
-          # registry/cosign combinations do not complete this in a single copy (dest verify: no
-          # signatures). See: sigstore/cosign#3379, Quay OCI/artifact support discussions.
-          cosign copy --only=sig,att,sbom "${SOURCE_REF}@${DIGEST}" "${DEST_REF}:${{ inputs.dest_tag }}"
+          # Copy image and referring artifacts (cosign keyless sig, SLSA, SBOM). `cosign copy`
+          # to Quay often does not copy signature objects; `oras copy -r` is the path cosign
+          # recommends. See: sigstore/cosign deprecation text for "copy" command.
+          oras copy -r "${SOURCE_REF}@${DIGEST}" "${DEST_REF}:${{ inputs.dest_tag }}"
 
           if [[ "${{ inputs.include_sha_tags }}" == "true" ]]; then
             crane tag "${DEST_REF}@${DIGEST}" "${SOURCE_TAG}"
@@ -159,9 +159,7 @@ jobs:
 
       - name: Verify destination signature
         if: ${{ inputs.verify_signature }}
-        # Quay often indexes cosign signature/attestation relations on the tag; verify by digest
-        # can return "no signatures found" even after a successful cosign copy --only=… (same ref).
         run: |
-          cosign verify "${DEST_REF}:${{ inputs.dest_tag }}" \
+          cosign verify "${DEST_REF}@${{ steps.resolve.outputs.digest }}" \
             --certificate-identity-regexp="$IDENTITY" \
             --certificate-oidc-issuer="$OIDC_ISSUER"
