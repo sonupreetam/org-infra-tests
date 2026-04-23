@@ -138,6 +138,10 @@ jobs:
           SOURCE_TAG: ${{ inputs.source_tag }}
         run: |
           cosign copy "${SOURCE_REF}@${DIGEST}" "${DEST_REF}:${{ inputs.dest_tag }}"
+          # Ensure cosign signature + attestation (SLSA/SBOM) objects land on the destination; some
+          # registry/cosign combinations do not complete this in a single copy (dest verify: no
+          # signatures). See: sigstore/cosign#3379, Quay OCI/artifact support discussions.
+          cosign copy --only=sig,att,sbom "${SOURCE_REF}@${DIGEST}" "${DEST_REF}:${{ inputs.dest_tag }}"
 
           if [[ "${{ inputs.include_sha_tags }}" == "true" ]]; then
             crane tag "${DEST_REF}@${DIGEST}" "${SOURCE_TAG}"
