@@ -1,17 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+# Test mirror: sonupreetam/org-infra-tests
+# Upstream: complytime/org-infra/.github/workflows/reusable_sign_and_verify.yml
+# Purpose: same workflow_call contract, including `allow_unprotected_ref` and `verify_vuln`,
+# for consumers (e.g. complytime-policies) to pin before those inputs exist on public main.
+# Bump the SHA in callers when this file changes.
+# ---
 # Reusable Sign and Verify Workflow
 # ==================================
 # Signs container images with Sigstore keyless signing and verifies all attestations.
 #
 # Prerequisites (attestations must exist before calling this workflow):
-#   - SLSA provenance: from reusable_publish_ghcr.yml or reusable_publish_oras.yml
-#   - SBOM:            from reusable_publish_ghcr.yml or reusable_publish_oras.yml
-#   - Vuln scan:       from reusable_vuln_scan.yml (cosign attest --type vuln)
-#                      Set enable_verify_vuln: false for ORAS data-only artifacts.
+#   - SLSA provenance: from reusable_publish_ghcr.yml, reusable_publish_oras.yml, or
+#     reusable_publish_gemara_oci.yml (actions/attest-build-provenance)
+#   - SBOM:            from the same (actions/attest)
+#   - Vuln scan:       from reusable_vuln_scan.yml (cosign attest --type vuln) — optional via verify_vuln input
+#
+# If allow_unprotected_ref is true, the job also runs on unprotected refs; match the same
+# allow_unprotected_ref in reusable_publish_oras / reusable_publish_gemara_oci when used together.
 #
 # Security guarantees:
 #   - All attestations are Sigstore-signed with Rekor transparency log
 #   - Certificate identity and OIDC issuer are verified
 #   - Workflow fails if ANY required attestation is missing or invalid
+#   - Vuln scan verification is skipped when verify_vuln: false (e.g., YAML-only OCI artifacts)
 
 name: Reusable Sign and Verify
 
@@ -35,11 +46,18 @@ on:
         required: false
         type: string
         default: ''
-      enable_verify_vuln:
-        description: 'Verify vulnerability scan attestation. Set false for data-only OCI artifacts (e.g., ORAS pushes) that have no vuln attestation.'
+      verify_vuln:
+        description: 'Verify vulnerability scan attestation. Set false for artifacts with no software dependencies (e.g., YAML data content).'
         required: false
         type: boolean
         default: true
+      allow_unprotected_ref:
+        description: >-
+          If true, run on unprotected refs (forks, testing). If false, only
+          github.ref_protected. Must match the publish reusable when chaining.
+        required: false
+        type: boolean
+        default: false
     secrets:
       quay_username:
         description: 'Quay.io username (only for quay.io images)'
@@ -65,11 +83,12 @@ concurrency:
 
 jobs:
   sign-and-verify:
+    if: ${{ github.ref_protected || inputs.allow_unprotected_ref }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      packages: write   # Push signature to registry
-      id-token: write   # OIDC token for keyless signing
+      packages: write
+      id-token: write
     environment: ${{ inputs.sign_environment || null }}
     outputs:
       digest: ${{ inputs.digest }}
@@ -83,7 +102,7 @@ jobs:
     steps:
       - name: Log in to GHCR
         if: contains(inputs.image_name, 'ghcr.io')
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
@@ -91,30 +110,27 @@ jobs:
 
       - name: Log in to Quay
         if: contains(inputs.image_name, 'quay.io')
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
         with:
           registry: quay.io
           username: ${{ secrets.quay_username }}
           password: ${{ secrets.quay_password }}
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
-
-      - name: Check Cosign version
-        run: cosign version
+        uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003
 
       - name: Sign image
         run: cosign sign --yes "$IMAGE"
 
       - name: Verify signature
-        run: cosign verify --verbose --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE"
+        run: cosign verify --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE" > /dev/null
 
       - name: Verify SLSA provenance
-        run: cosign verify-attestation --verbose --type https://slsa.dev/provenance/v1 --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE" > /dev/null
+        run: cosign verify-attestation --type https://slsa.dev/provenance/v1 --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE" > /dev/null
 
       - name: Verify SBOM
-        run: cosign verify-attestation --verbose --type https://spdx.dev/Document/v2.3 --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE" > /dev/null
+        run: cosign verify-attestation --type https://spdx.dev/Document/v2.3 --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE" > /dev/null
 
       - name: Verify vulnerability scan
-        if: ${{ inputs.enable_verify_vuln }}
-        run: cosign verify-attestation --verbose --type vuln --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE" > /dev/null
+        if: ${{ inputs.verify_vuln }}
+        run: cosign verify-attestation --type vuln --certificate-identity-regexp="$IDENTITY" --certificate-oidc-issuer="$OIDC_ISSUER" "$IMAGE" > /dev/null
