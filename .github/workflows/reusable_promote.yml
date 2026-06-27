@@ -86,7 +86,7 @@ jobs:
       IDENTITY: ${{ inputs.allowed_identity_regex || format('https://github.com/{0}/.*', github.repository_owner) }}
       OIDC_ISSUER: https://token.actions.githubusercontent.com
     steps:
-      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+      - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
       - uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
 
       - name: Validate inputs
