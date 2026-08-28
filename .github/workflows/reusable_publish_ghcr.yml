@@ -144,7 +144,7 @@ jobs:
           push-to-registry: true
 
       - name: Generate SBOM
-        uses: anchore/sbom-action@deef08a0db64bfad603422135db61477b16cef56 # v0.22.1
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           image: ${{ steps.images.outputs.image }}@${{ steps.build.outputs.digest }}
           format: spdx-json
